@@ -1,0 +1,7 @@
+# 公開しないもの
+secrets.json
+rules/
+verification/
+qa_report.md
+make_rules.py
+.DS_Store

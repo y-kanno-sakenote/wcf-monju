@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>WCF ひとこと相談</title>
+<style>
+:root{
+  --bg:#f7f3ee; --card:#fff; --ink:#2b2024; --sub:#7a6a70; --line:#e6dcd6;
+  --wine:#7b1e3a; --wine-soft:#f3e4e8; --wait:#b5651d;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#1c1618; --card:#271f22; --ink:#f1e9ec; --sub:#a8979d; --line:#3a2f33;
+    --wine:#d9708f; --wine-soft:#3a2229; --wait:#e0a060; }
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+  -webkit-text-size-adjust:100%}
+.wrap{max-width:640px;margin:0 auto;padding:16px 16px 48px}
+h1{font-size:20px;margin:8px 0 4px;color:var(--wine);letter-spacing:.04em}
+.lead{color:var(--sub);font-size:13px;margin:0 0 16px}
+input,button{font:inherit}
+input[type=text],input[type=password]{width:100%;padding:12px;border:1px solid var(--line);
+  border-radius:10px;background:var(--card);color:var(--ink);font-size:16px}
+button{border:0;border-radius:10px;padding:12px 16px;background:var(--wine);color:#fff;
+  font-weight:600;cursor:pointer;white-space:nowrap}
+button.ghost{background:transparent;color:var(--sub);padding:6px 8px;font-weight:400}
+button:disabled{opacity:.5}
+label{display:block;font-size:13px;color:var(--sub);margin:12px 0 4px}
+.err{color:#c0392b;font-size:13px;min-height:1.4em;margin-top:8px}
+.hidden{display:none!important}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.me{font-size:13px;color:var(--sub)}
+.row{display:flex;gap:8px;align-items:center}
+.row input{flex:1;min-width:0}
+.ask{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin:12px 0 20px}
+.q{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 0 12px}
+.qtext{font-size:17px;font-weight:600;line-height:1.5;word-break:break-word}
+.meta{font-size:12px;color:var(--sub);margin-top:4px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tag{font-size:11px;color:var(--wait);border:1px solid var(--wait);border-radius:999px;padding:0 6px}
+.answers{margin:10px 0 0;padding:0;list-style:none}
+.answers li{background:var(--wine-soft);border-radius:10px;padding:8px 10px;margin-top:6px}
+.atext{line-height:1.5;word-break:break-word}
+.reply{margin-top:10px}
+.reply input{padding:9px 10px;font-size:16px}
+.reply button{padding:9px 12px}
+.del{background:none;color:var(--sub);padding:0 4px;font-weight:400;font-size:12px;text-decoration:underline}
+.empty{color:var(--sub);text-align:center;padding:32px 0;font-size:14px}
+.menu{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin:8px 0}
+.menu button{display:block;width:100%;text-align:left}
+.admin{font-size:11px;color:#fff;background:var(--wine);border-radius:999px;padding:1px 6px;margin-left:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 入口 -->
+  <section id="gate" class="hidden">
+    <h1>WCF ひとこと相談</h1>
+    <p class="lead">会員だけの掲示板です。<br>一言で聞いて、一言で答えます。</p>
+    <form id="gateForm">
+      <label for="pass">合言葉</label>
+      <input id="pass" type="password" autocomplete="off" required>
+      <label for="name">ニックネーム（12字まで）</label>
+      <input id="name" type="text" maxlength="12" required>
+      <div style="margin-top:16px"><button type="submit" id="gateBtn">入る</button></div>
+      <div class="err" id="gateErr"></div>
+    </form>
+  </section>
+
+  <!-- 本体 -->
+  <section id="main" class="hidden">
+    <div class="bar">
+      <h1>WCF ひとこと相談</h1>
+      <button class="ghost" id="menuBtn" aria-label="メニュー">⋯</button>
+    </div>
+    <div class="me" id="meLine"></div>
+    <div class="menu hidden" id="menu">
+      <button class="ghost" id="renameBtn">ニックネームを変える</button>
+      <button class="ghost" id="adminBtn">管理者として入る</button>
+      <button class="ghost" id="leaveBtn">退出する</button>
+    </div>
+
+    <form class="ask" id="askForm">
+      <div class="row">
+        <input id="askInput" type="text" maxlength="40" placeholder="一言で質問（40字まで）" autocomplete="off">
+        <button type="submit">聞く</button>
+      </div>
+    </form>
+    <div class="err" id="mainErr"></div>
+
+    <div id="list"></div>
+  </section>
+
+</div>
+
+<script>
+"use strict";
+const MAX_Q = 40, MAX_A = 40, MAX_NAME = 12;
+const LS = "wcf-hitokoto:";
+const params = new URLSearchParams(location.search);
+const MOCK = params.has("mock");
+const ADMIN_URL = params.has("admin");
+
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDW89EnVh-bZjfIpnTidcGOX1NqnhQ9tp8",
+  authDomain: "wine-aroma-board.firebaseapp.com",
+  databaseURL: "https://wine-aroma-board-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "wine-aroma-board",
+};
+const FIREBASE_SDK = "https://www.gstatic.com/firebasejs/10.14.1/";
+
+// ---------- 小道具 ----------
+const $ = id => document.getElementById(id);
+const ls = {
+  get(k){ try{ return localStorage.getItem(LS+k); }catch(e){ return null; } },
+  set(k,v){ try{ localStorage.setItem(LS+k,v); }catch(e){} },
+  del(k){ try{ localStorage.removeItem(LS+k); }catch(e){} },
+};
+const clean = (s, max) => (s||"").normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g,"").replace(/\s+/g," ").trim().slice(0,max);
+async function roomOf(pass){
+  const data = new TextEncoder().encode("wcf-hitokoto|" + pass.normalize("NFKC").trim());
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+function ago(t){
+  const s = Math.max(0, (Date.now()-t)/1000);
+  if (s < 60) return "いま";
+  if (s < 3600) return Math.floor(s/60)+"分前";
+  if (s < 86400) return Math.floor(s/3600)+"時間前";
+  if (s < 86400*30) return Math.floor(s/86400)+"日前";
+  const d = new Date(t); return (d.getMonth()+1)+"/"+d.getDate();
+}
+function el(tag, attrs={}, ...kids){
+  const e = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs)){
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  for (const c of kids) if (c != null) e.append(c);
+  return e;
+}
+function loadScript(src){ return new Promise((ok,ng)=>{ const s=document.createElement("script"); s.src=src; s.onload=ok; s.onerror=()=>ng(new Error("load "+src)); document.head.append(s); }); }
+
+// ---------- 保存先（Firebase / 試し版） ----------
+class FireStore {
+  async init(){
+    for (const f of ["firebase-app-compat.js","firebase-auth-compat.js","firebase-database-compat.js"]) await loadScript(FIREBASE_SDK+f);
+    const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(FIREBASE_CONFIG);
+    const auth = app.auth();
+    let user = auth.currentUser || await new Promise(r=>{ const u=auth.onAuthStateChanged(x=>{u(); r(x);}); });
+    if (!user) user = (await auth.signInAnonymously()).user;
+    this.uid = user.uid; this.db = app.database();
+  }
+  async open(room){
+    this.room = this.db.ref("wcf/"+room);
+    const timeout = new Promise((_,ng) => setTimeout(() => ng(new Error("network timeout")), 10000));
+    try { await Promise.race([this.room.child("q").limitToLast(1).once("value"), timeout]); return true; }
+    catch(e){ if (/network/.test(e.message)) throw e; return false; }   // 合言葉違い＝ルールで読めない
+  }
+  subscribe(cb){
+    let q = {}, a = {};
+    const fire = () => cb(q, a);
+    this.room.child("q").limitToLast(300).on("value", s => { q = s.val()||{}; fire(); }, err => cb(null,null,err));
+    this.room.child("a").on("value", s => { a = s.val()||{}; fire(); }, err => cb(null,null,err));
+  }
+  ask(n, x){ return this.room.child("q").push({ u:this.uid, n, x, t:firebase.database.ServerValue.TIMESTAMP }); }
+  answer(qid, n, x){ return this.room.child("a/"+qid).push({ u:this.uid, n, x, t:firebase.database.ServerValue.TIMESTAMP }); }
+  delQ(qid){ return this.room.update({ ["q/"+qid]:null, ["a/"+qid]:null }); }
+  delA(qid, aid){ return this.room.child("a/"+qid+"/"+aid).remove(); }
+  async becomeAdmin(code){ await this.db.ref("wcfAdmins/"+this.uid).set(code); }
+  async dropAdmin(){ try{ await this.db.ref("wcfAdmins/"+this.uid).remove(); }catch(e){} }
+}
+
+// 試し版：この端末のブラウザだけに保存。合言葉は「test」、管理用は「admin」
+class MockStore {
+  async init(){ this.uid = ls.get("mockUid") || ("me-"+Math.random().toString(36).slice(2,8)); ls.set("mockUid", this.uid); }
+  _load(){ try{ return JSON.parse(localStorage.getItem(LS+"mockData")) || {q:{},a:{}}; }catch(e){ return {q:{},a:{}}; } }
+  _save(d){ localStorage.setItem(LS+"mockData", JSON.stringify(d)); this.cb && this.cb(d.q, d.a); }
+  async open(room){ return room === await roomOf("test"); }
+  subscribe(cb){ this.cb = cb; const d=this._load(); cb(d.q, d.a);
+    window.addEventListener("storage", e => { if (e.key===LS+"mockData"){ const d=this._load(); cb(d.q,d.a); } }); }
+  _id(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+  async ask(n,x){ const d=this._load(); d.q[this._id()]={u:this.uid,n,x,t:Date.now()}; this._save(d); }
+  async answer(qid,n,x){ const d=this._load(); if(!d.q[qid]) throw new Error("PERMISSION_DENIED"); (d.a[qid] ||= {})[this._id()]={u:this.uid,n,x,t:Date.now()}; this._save(d); }
+  _canDel(owner){ return owner===this.uid || ls.get("mockAdmin")==="1"; }
+  async delQ(qid){ const d=this._load(); if(!this._canDel(d.q[qid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.q[qid]; delete d.a[qid]; this._save(d); }
+  async delA(qid,aid){ const d=this._load(); if(!this._canDel(d.a[qid]?.[aid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.a[qid][aid]; this._save(d); }
+  async becomeAdmin(code){ if(code!=="admin") throw new Error("PERMISSION_DENIED"); ls.set("mockAdmin","1"); }
+  async dropAdmin(){ ls.del("mockAdmin"); }
+}
+
+// ---------- 画面 ----------
+const store = MOCK ? new MockStore() : new FireStore();
+let me = { name: "", admin: false };
+let data = { q:{}, a:{} };
+
+function show(id){ for (const s of ["gate","main"]) $(s).classList.toggle("hidden", s!==id); }
+function setErr(id, msg){ $(id).textContent = msg || ""; }
+function friendly(e){
+  const m = String(e && (e.code || e.message) || e);
+  if (/PERMISSION|permission/.test(m)) return "書き込めませんでした。もう消された投稿かもしれません";
+  if (/network|offline/i.test(m)) return "つながりません。電波のよい所でもう一度";
+  return "うまくいきませんでした。もう一度どうぞ";
+}
+function renderMe(){
+  $("adminBtn").classList.toggle("hidden", !(ADMIN_URL || me.admin));
+  $("meLine").innerHTML = "";
+  $("meLine").append("あなた：" + me.name, me.admin ? el("span",{class:"admin"},"管理者") : "");
+  $("adminBtn").textContent = me.admin ? "管理者をやめる" : "管理者として入る";
+}
+
+function render(){
+  const list = $("list");
+  // 入力途中の回答欄を残す
+  const drafts = {};
+  list.querySelectorAll("input[data-q]").forEach(i => { if (i.value) drafts[i.dataset.q] = i.value; });
+  const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.q : null;
+  list.innerHTML = "";
+  const qs = Object.entries(data.q).map(([id,q]) => {
+    const ans = Object.entries(data.a[id]||{}).sort((x,y)=>x[1].t-y[1].t);
+    return { id, ...q, ans };
+  });
+  // 回答まちを上に。その中は新しい順
+  qs.sort((x,y) => {
+    const wx = x.ans.length===0, wy = y.ans.length===0;
+    if (wx !== wy) return wx ? -1 : 1;
+    return y.t - x.t;
+  });
+  if (!qs.length){ list.append(el("div",{class:"empty"},"まだ質問がありません。最初の一言をどうぞ。")); return; }
+  for (const q of qs){
+    const wait = q.ans.length === 0;
+    const card = el("article",{class:"q"},
+      el("div",{class:"qtext"}, q.x),
+      el("div",{class:"meta"}, q.n+" ・ "+ago(q.t), wait ? el("span",{class:"tag"},"回答まち") : null,
+        (q.u===store.uid || me.admin) ? el("button",{class:"del", onclick:()=>delQ(q.id)},"消す") : null)
+    );
+    if (q.ans.length){
+      const ul = el("ul",{class:"answers"});
+      for (const [aid,a] of q.ans){
+        ul.append(el("li",{},
+          el("div",{class:"atext"}, a.x),
+          el("div",{class:"meta"}, a.n+" ・ "+ago(a.t),
+            (a.u===store.uid || me.admin) ? el("button",{class:"del", onclick:()=>delA(q.id,aid)},"消す") : null)
+        ));
+      }
+      card.append(ul);
+    }
+    const inp = el("input",{type:"text", maxlength:String(MAX_A), placeholder:"一言で答える", autocomplete:"off", "aria-label":"回答", "data-q":q.id});
+    if (drafts[q.id]) inp.value = drafts[q.id];
+    const form = el("form",{class:"row reply", onsubmit: async ev => {
+      ev.preventDefault();
+      const x = clean(inp.value, MAX_A); if (!x) return;
+      inp.disabled = true;
+      try { await store.answer(q.id, me.name, x); inp.value=""; setErr("mainErr"); }
+      catch(e){ setErr("mainErr", friendly(e)); }
+      inp.disabled = false;
+    }}, inp, el("button",{type:"submit"},"答える"));
+    card.append(form);
+    list.append(card);
+    if (focused === q.id) inp.focus();
+  }
+}
+
+async function delQ(qid){
+  if (!confirm("この質問を回答ごと消しますか？")) return;
+  try { await store.delQ(qid); } catch(e){ setErr("mainErr", friendly(e)); }
+}
+async function delA(qid, aid){
+  if (!confirm("この回答を消しますか？")) return;
+  try { await store.delA(qid, aid); } catch(e){ setErr("mainErr", friendly(e)); }
+}
+
+async function enter(room){
+  const ok = await store.open(room);
+  if (!ok) return false;
+  show("main"); renderMe();
+  store.subscribe((q,a,err) => {
+    if (err){ setErr("mainErr","合言葉が変わったようです。メニューの「退出する」から入り直してください"); return; }
+    data = { q, a }; render();
+  });
+  setInterval(render, 60000); // 「◯分前」を更新
+  return true;
+}
+
+$("gateForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const name = clean($("name").value, MAX_NAME);
+  const pass = $("pass").value;
+  if (!name){ setErr("gateErr","ニックネームを入れてください"); return; }
+  $("gateBtn").disabled = true; setErr("gateErr");
+  try {
+    const room = await roomOf(pass);
+    me.name = name;
+    if (await enter(room)){ ls.set("room", room); ls.set("name", name); }
+    else setErr("gateErr","合言葉が違います");
+  } catch(e){ setErr("gateErr", friendly(e)); }
+  $("gateBtn").disabled = false;
+});
+
+$("askForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const x = clean($("askInput").value, MAX_Q); if (!x) return;
+  $("askInput").disabled = true;
+  try { await store.ask(me.name, x); $("askInput").value=""; setErr("mainErr"); }
+  catch(e){ setErr("mainErr", friendly(e)); }
+  $("askInput").disabled = false;
+});
+
+$("menuBtn").addEventListener("click", () => $("menu").classList.toggle("hidden"));
+$("renameBtn").addEventListener("click", () => {
+  const n = clean(prompt("新しいニックネーム（12字まで）", me.name), MAX_NAME);
+  if (n){ me.name = n; ls.set("name", n); renderMe(); }
+  $("menu").classList.add("hidden");
+});
+$("adminBtn").addEventListener("click", async () => {
+  $("menu").classList.add("hidden");
+  if (me.admin){ await store.dropAdmin(); me.admin=false; ls.del("admin"); renderMe(); render(); return; }
+  const code = prompt("管理用の合言葉");
+  if (!code) return;
+  try { await store.becomeAdmin(code.normalize("NFKC").trim()); me.admin = true; ls.set("admin","1"); renderMe(); render(); setErr("mainErr"); }
+  catch(e){ setErr("mainErr","管理用の合言葉が違います"); }
+});
+$("leaveBtn").addEventListener("click", async () => {
+  if (!confirm("退出しますか？投稿は残ります")) return;
+  if (me.admin) await store.dropAdmin();
+  for (const k of ["room","name","admin"]) ls.del(k);
+  location.reload();
+});
+
+(async () => {
+  try { await store.init(); }
+  catch(e){ show("gate"); setErr("gateErr","つながりません。電波のよい所で開き直してください"); return; }
+  const room = ls.get("room"), name = ls.get("name");
+  me.admin = ls.get("admin") === "1";
+  if (room && name){
+    me.name = name;
+    try { if (await enter(room)) return; }
+    catch(e){ show("gate"); $("name").value = name; setErr("gateErr","つながりません。電波のよい所で開き直してください"); return; }
+  }
+  for (const k of ["room","admin"]) ls.del(k);
+  me.admin = false;
+  if (name) $("name").value = name;
+  show("gate");
+})();
+</script>
+</body>
+</html>
