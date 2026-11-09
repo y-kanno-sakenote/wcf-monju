@@ -81,7 +81,6 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
     <div class="me" id="meLine"></div>
     <div class="menu hidden" id="menu">
       <button class="ghost" id="renameBtn">ニックネームを変える</button>
-      <button class="ghost" id="adminBtn">管理者として入る</button>
       <button class="ghost" id="leaveBtn">退出する</button>
     </div>
 
@@ -104,7 +103,8 @@ const MAX_Q = 140, MAX_A = 140, MAX_NAME = 12;
 const LS = "wcf-hitokoto:";
 const params = new URLSearchParams(location.search);
 const MOCK = params.has("mock");
-const ADMIN_URL = params.has("admin");
+// 管理用の合言葉で開ける「会員の部屋の鍵」（make_rules.py が書き込む）
+const ADMIN_BLOB = "L83vzukAMaCcnkOQHnPgfA==.PqPIY44M8ZL7lMcB.lv8Lxja1n8heGjK+ArPwK8JAOSfrkl3q+YaMURvA52TOFCx+XX6Q5dlT7zAQXRpxR+xRZyxM2FkKs/XHsySUog5U2gG2Lm6C7kgP3O25twY=";
 
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDW89EnVh-bZjfIpnTidcGOX1NqnhQ9tp8",
@@ -126,6 +126,15 @@ async function roomOf(pass){
   const data = new TextEncoder().encode("wcf-hitokoto|" + pass.normalize("NFKC").trim());
   const buf = await crypto.subtle.digest("SHA-256", data);
   return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+async function unlockAdmin(code){
+  if (!ADMIN_BLOB) return null;
+  try {
+    const [salt, iv, ct] = ADMIN_BLOB.split(".").map(b => Uint8Array.from(atob(b), c => c.charCodeAt(0)));
+    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(code), "PBKDF2", false, ["deriveKey"]);
+    const key = await crypto.subtle.deriveKey({name:"PBKDF2", salt, iterations:200000, hash:"SHA-256"}, base, {name:"AES-GCM", length:256}, false, ["decrypt"]);
+    return new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM", iv}, key, ct));
+  } catch(e){ return null; }   // 違う合言葉
 }
 function ago(t){
   const s = Math.max(0, (Date.now()-t)/1000);
@@ -174,6 +183,7 @@ class FireStore {
   delQ(qid){ return this.room.update({ ["q/"+qid]:null, ["a/"+qid]:null }); }
   delA(qid, aid){ return this.room.child("a/"+qid+"/"+aid).remove(); }
   async becomeAdmin(code){ await this.db.ref("wcfAdmins/"+this.uid).set(code); }
+  async adminRoom(code){ return unlockAdmin(code); }
   async dropAdmin(){ try{ await this.db.ref("wcfAdmins/"+this.uid).remove(); }catch(e){} }
 }
 
@@ -192,6 +202,7 @@ class MockStore {
   async delQ(qid){ const d=this._load(); if(!this._canDel(d.q[qid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.q[qid]; delete d.a[qid]; this._save(d); }
   async delA(qid,aid){ const d=this._load(); if(!this._canDel(d.a[qid]?.[aid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.a[qid][aid]; this._save(d); }
   async becomeAdmin(code){ if(code!=="admin") throw new Error("PERMISSION_DENIED"); ls.set("mockAdmin","1"); }
+  async adminRoom(code){ return code==="admin" ? roomOf("test") : null; }
   async dropAdmin(){ ls.del("mockAdmin"); }
 }
 
@@ -209,10 +220,8 @@ function friendly(e){
   return "うまくいきませんでした。もう一度どうぞ";
 }
 function renderMe(){
-  $("adminBtn").classList.toggle("hidden", !(ADMIN_URL || me.admin));
   $("meLine").innerHTML = "";
   $("meLine").append("あなた：" + me.name, me.admin ? el("span",{class:"admin"},"管理者") : "");
-  $("adminBtn").textContent = me.admin ? "管理者をやめる" : "管理者として入る";
 }
 
 function render(){
@@ -295,10 +304,21 @@ $("gateForm").addEventListener("submit", async ev => {
   if (!name){ setErr("gateErr","ニックネームを入れてください"); return; }
   $("gateBtn").disabled = true; setErr("gateErr");
   try {
-    const room = await roomOf(pass);
     me.name = name;
+    const room = await roomOf(pass);
     if (await enter(room)){ ls.set("room", room); ls.set("name", name); }
-    else setErr("gateErr","合言葉が違います");
+    else {
+      // 会員の合言葉で開かなければ、管理用の合言葉として試す
+      const code = pass.normalize("NFKC").trim();
+      const aroom = await store.adminRoom(code);
+      if (!aroom){ setErr("gateErr","合言葉が違います"); }
+      else {
+        await store.becomeAdmin(code);
+        me.admin = true;
+        if (await enter(aroom)){ ls.set("room", aroom); ls.set("name", name); ls.set("admin","1"); }
+        else { me.admin = false; setErr("gateErr","合言葉が違います"); }
+      }
+    }
   } catch(e){ setErr("gateErr", friendly(e)); }
   $("gateBtn").disabled = false;
 });
@@ -317,14 +337,6 @@ $("renameBtn").addEventListener("click", () => {
   const n = clean(prompt("新しいニックネーム（12字まで）", me.name), MAX_NAME);
   if (n){ me.name = n; ls.set("name", n); renderMe(); }
   $("menu").classList.add("hidden");
-});
-$("adminBtn").addEventListener("click", async () => {
-  $("menu").classList.add("hidden");
-  if (me.admin){ await store.dropAdmin(); me.admin=false; ls.del("admin"); renderMe(); render(); return; }
-  const code = prompt("管理用の合言葉");
-  if (!code) return;
-  try { await store.becomeAdmin(code.normalize("NFKC").trim()); me.admin = true; ls.set("admin","1"); renderMe(); render(); setErr("mainErr"); }
-  catch(e){ setErr("mainErr","管理用の合言葉が違います"); }
 });
 $("leaveBtn").addEventListener("click", async () => {
   if (!confirm("退出しますか？投稿は残ります")) return;
