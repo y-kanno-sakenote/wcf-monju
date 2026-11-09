@@ -22,7 +22,7 @@ html,body{margin:0;background:var(--bg);color:var(--ink);
 h1{font-size:20px;margin:8px 0 4px;color:var(--wine);letter-spacing:.04em}
 .lead{color:var(--sub);font-size:13px;margin:0 0 16px}
 input,button{font:inherit}
-input[type=text],input[type=password]{width:100%;padding:12px;border:1px solid var(--line);
+input[type=text],input[type=password],textarea{width:100%;padding:12px;border:1px solid var(--line);
   border-radius:10px;background:var(--card);color:var(--ink);font-size:16px}
 button{border:0;border-radius:10px;padding:12px 16px;background:var(--wine);color:#fff;
   font-weight:600;cursor:pointer;white-space:nowrap}
@@ -34,7 +34,9 @@ label{display:block;font-size:13px;color:var(--sub);margin:12px 0 4px}
 .bar{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .me{font-size:13px;color:var(--sub)}
 .row{display:flex;gap:8px;align-items:center}
-.row input{flex:1;min-width:0}
+.row input,.row textarea{flex:1;min-width:0}
+textarea{resize:none;line-height:1.5;font-family:inherit}
+.row{align-items:flex-end}
 .ask{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin:12px 0 20px}
 .q{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 0 12px}
 .qtext{font-size:17px;font-weight:600;line-height:1.5;word-break:break-word}
@@ -44,7 +46,7 @@ label{display:block;font-size:13px;color:var(--sub);margin:12px 0 4px}
 .answers li{background:var(--wine-soft);border-radius:10px;padding:8px 10px;margin-top:6px}
 .atext{line-height:1.5;word-break:break-word}
 .reply{margin-top:10px}
-.reply input{padding:9px 10px;font-size:16px}
+.reply textarea{padding:9px 10px;font-size:16px}
 .reply button{padding:9px 12px}
 .del{background:none;color:var(--sub);padding:0 4px;font-weight:400;font-size:12px;text-decoration:underline}
 .empty{color:var(--sub);text-align:center;padding:32px 0;font-size:14px}
@@ -85,7 +87,7 @@ label{display:block;font-size:13px;color:var(--sub);margin:12px 0 4px}
 
     <form class="ask" id="askForm">
       <div class="row">
-        <input id="askInput" type="text" maxlength="40" placeholder="一言で質問（40字まで）" autocomplete="off">
+        <textarea id="askInput" rows="2" maxlength="140" placeholder="一言で質問（140字まで）"></textarea>
         <button type="submit">聞く</button>
       </div>
     </form>
@@ -98,7 +100,7 @@ label{display:block;font-size:13px;color:var(--sub);margin:12px 0 4px}
 
 <script>
 "use strict";
-const MAX_Q = 40, MAX_A = 40, MAX_NAME = 12;
+const MAX_Q = 140, MAX_A = 140, MAX_NAME = 12;
 const LS = "wcf-hitokoto:";
 const params = new URLSearchParams(location.search);
 const MOCK = params.has("mock");
@@ -217,7 +219,7 @@ function render(){
   const list = $("list");
   // 入力途中の回答欄を残す
   const drafts = {};
-  list.querySelectorAll("input[data-q]").forEach(i => { if (i.value) drafts[i.dataset.q] = i.value; });
+  list.querySelectorAll("textarea[data-q]").forEach(i => { if (i.value) drafts[i.dataset.q] = i.value; });
   const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.q : null;
   list.innerHTML = "";
   const qs = Object.entries(data.q).map(([id,q]) => {
@@ -249,7 +251,7 @@ function render(){
       }
       card.append(ul);
     }
-    const inp = el("input",{type:"text", maxlength:String(MAX_A), placeholder:"一言で答える", autocomplete:"off", "aria-label":"回答", "data-q":q.id});
+    const inp = el("textarea",{rows:"2", maxlength:String(MAX_A), placeholder:"一言で答える", "aria-label":"回答", "data-q":q.id});
     if (drafts[q.id]) inp.value = drafts[q.id];
     const form = el("form",{class:"row reply", onsubmit: async ev => {
       ev.preventDefault();
