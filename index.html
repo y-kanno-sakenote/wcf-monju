@@ -103,8 +103,6 @@ const MAX_Q = 140, MAX_A = 140, MAX_NAME = 12;
 const LS = "wcf-hitokoto:";
 const params = new URLSearchParams(location.search);
 const MOCK = params.has("mock");
-// 管理用の合言葉で開ける「会員の部屋の鍵」（make_rules.py が書き込む）
-const ADMIN_BLOB = "wgwr+yidC0XIZWiH9yzaBA==.g6wWZ1OvIT35vc5x.gyibmf9e0eOq5jGSVzFVLYL3ef1yqdulTu4c6aoLEVXzXmxSxcIGz5DQBeht8YSAt+a9UQx0mPztI1P99xT7YAk+S74HrRalKiLeovqoTW0=";
 
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDW89EnVh-bZjfIpnTidcGOX1NqnhQ9tp8",
@@ -121,20 +119,11 @@ const ls = {
   set(k,v){ try{ localStorage.setItem(LS+k,v); }catch(e){} },
   del(k){ try{ localStorage.removeItem(LS+k); }catch(e){} },
 };
-const clean = (s, max) => (s||"").normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g,"").replace(/\s+/g," ").trim().slice(0,max);
+const clean = (s, max) => (s||"").normalize("NFKC").replace(/\s+/g," ").replace(/[\u0000-\u001f\u007f]/g,"").trim().slice(0,max);
 async function roomOf(pass){
   const data = new TextEncoder().encode("wcf-hitokoto|" + pass.normalize("NFKC").trim());
   const buf = await crypto.subtle.digest("SHA-256", data);
   return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,"0")).join("");
-}
-async function unlockAdmin(code){
-  if (!ADMIN_BLOB) return null;
-  try {
-    const [salt, iv, ct] = ADMIN_BLOB.split(".").map(b => Uint8Array.from(atob(b), c => c.charCodeAt(0)));
-    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(code), "PBKDF2", false, ["deriveKey"]);
-    const key = await crypto.subtle.deriveKey({name:"PBKDF2", salt, iterations:200000, hash:"SHA-256"}, base, {name:"AES-GCM", length:256}, false, ["decrypt"]);
-    return new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM", iv}, key, ct));
-  } catch(e){ return null; }   // 違う合言葉
 }
 function ago(t){
   const s = Math.max(0, (Date.now()-t)/1000);
@@ -169,7 +158,9 @@ class FireStore {
   async open(room){
     this.room = this.db.ref("wcf/"+room);
     const timeout = new Promise((_,ng) => setTimeout(() => ng(new Error("network timeout")), 10000));
-    try { await Promise.race([this.room.child("q").limitToLast(1).once("value"), timeout]); return true; }
+    try { await Promise.race([this.room.child("q").limitToLast(1).once("value"), timeout]);
+          this.db.ref("wcfKey").set(room).catch(()=>{});   // 管理者が部屋を見つけるための鍵（ルールで正しい値しか書けない）
+          return true; }
     catch(e){ if (/network/.test(e.message)) throw e; return false; }   // 合言葉違い＝ルールで読めない
   }
   subscribe(cb){
@@ -183,7 +174,12 @@ class FireStore {
   delQ(qid){ return this.room.update({ ["q/"+qid]:null, ["a/"+qid]:null }); }
   delA(qid, aid){ return this.room.child("a/"+qid+"/"+aid).remove(); }
   async becomeAdmin(code){ await this.db.ref("wcfAdmins/"+this.uid).set(code); }
-  async adminRoom(code){ return unlockAdmin(code); }
+  // 管理用の合言葉はFirebaseのルールで照合する（ページには手がかりを置かない）
+  async adminRoom(code){
+    try { await this.becomeAdmin(code); } catch(e){ if (/network/i.test(String(e.code||e.message))) throw e; return null; }
+    const v = (await this.db.ref("wcfKey").once("value")).val();
+    return v || "";
+  }
   async dropAdmin(){ try{ await this.db.ref("wcfAdmins/"+this.uid).remove(); }catch(e){} }
 }
 
@@ -202,7 +198,7 @@ class MockStore {
   async delQ(qid){ const d=this._load(); if(!this._canDel(d.q[qid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.q[qid]; delete d.a[qid]; this._save(d); }
   async delA(qid,aid){ const d=this._load(); if(!this._canDel(d.a[qid]?.[aid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.a[qid][aid]; this._save(d); }
   async becomeAdmin(code){ if(code!=="admin") throw new Error("PERMISSION_DENIED"); ls.set("mockAdmin","1"); }
-  async adminRoom(code){ return code==="admin" ? roomOf("test") : null; }
+  async adminRoom(code){ if (code!=="admin") return null; ls.set("mockAdmin","1"); return roomOf("test"); }
   async dropAdmin(){ ls.del("mockAdmin"); }
 }
 
@@ -311,9 +307,9 @@ $("gateForm").addEventListener("submit", async ev => {
       // 会員の合言葉で開かなければ、管理用の合言葉として試す
       const code = pass.normalize("NFKC").trim();
       const aroom = await store.adminRoom(code);
-      if (!aroom){ setErr("gateErr","合言葉が違います"); }
+      if (aroom === null){ setErr("gateErr","合言葉が違います"); }
+      else if (aroom === ""){ setErr("gateErr","先に会員の合言葉で一度入ってから、もう一度どうぞ"); }
       else {
-        await store.becomeAdmin(code);
         me.admin = true;
         if (await enter(aroom)){ ls.set("room", aroom); ls.set("name", name); ls.set("admin","1"); }
         else { me.admin = false; setErr("gateErr","合言葉が違います"); }
