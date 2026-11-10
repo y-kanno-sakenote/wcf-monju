@@ -60,6 +60,11 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
 .pick button{background:none;color:var(--sub);padding:4px 8px;font-weight:400}
 .photo{display:block;width:100%;border-radius:10px;margin-top:8px}
 .see{background:none;color:var(--wine);padding:4px 0 0;font-weight:400;font-size:13px}
+.like{background:none;color:var(--sub);border:1px solid var(--line);border-radius:999px;padding:0 8px;font-weight:400;font-size:12px}
+.like.on{color:#fff;background:var(--wine);border-color:var(--wine)}
+.find{position:relative;margin:0 0 12px}
+.find span{position:absolute;left:12px;top:50%;transform:translateY(-50%);pointer-events:none;font-size:14px}
+.find input{padding-left:36px}
 .admin{font-size:11px;color:#fff;background:var(--wine);border-radius:999px;padding:1px 6px;margin-left:4px}
 </style>
 </head>
@@ -97,6 +102,7 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
       <div id="askPick"></div>
     </form>
     <div class="err" id="mainErr"></div>
+    <div class="find"><span aria-hidden="true">🔍</span><input id="findInput" type="text" enterkeyhint="search" placeholder="キーワードで探す" aria-label="キーワードで探す"></div>
 
     <div id="list"></div>
   </section>
@@ -231,10 +237,11 @@ class FireStore {
     catch(e){ if (/network/.test(e.message)) throw e; return false; }   // 合言葉違い＝ルールで読めない
   }
   subscribe(cb){
-    let q = {}, a = {};
-    const fire = () => cb(q, a);
+    let q = {}, a = {}, l = {};
+    const fire = () => cb(q, a, null, l);
     this.room.child("q").limitToLast(300).on("value", s => { q = s.val()||{}; fire(); }, err => cb(null,null,err));
     this.room.child("a").on("value", s => { a = s.val()||{}; fire(); }, err => cb(null,null,err));
+    this.room.child("lk").on("value", s => { l = s.val()||{}; fire(); }, err => cb(null,null,err));   // いいね（小さいデータ）
   }
   // 投稿と写真は多重パスの update でまとめて書く（写真の中身は qi / ai、本文には印 p だけ）
   ask(n, x, photo){
@@ -247,8 +254,9 @@ class FireStore {
     if (!photo) return this.room.child("a/"+qid+"/"+id).set(post);
     return this.room.update({ ["a/"+qid+"/"+id]:{...post, p:true}, ["ai/"+qid+"/"+id]:{ u:this.uid, d:photo } });
   }
-  delQ(qid){ return this.room.update({ ["q/"+qid]:null, ["a/"+qid]:null, ["qi/"+qid]:null, ["ai/"+qid]:null }); }
-  delA(qid, aid){ return this.room.update({ ["a/"+qid+"/"+aid]:null, ["ai/"+qid+"/"+aid]:null }); }
+  delQ(qid){ return this.room.update({ ["q/"+qid]:null, ["a/"+qid]:null, ["qi/"+qid]:null, ["ai/"+qid]:null, ["lk/"+qid]:null }); }
+  delA(qid, aid){ return this.room.update({ ["a/"+qid+"/"+aid]:null, ["ai/"+qid+"/"+aid]:null, ["lk/"+qid+"/"+aid]:null }); }
+  like(qid, k, on){ const r = this.room.child("lk/"+qid+"/"+k+"/"+this.uid); return on ? r.set(true) : r.remove(); }
   async photo(qid, aid){ const s = await this.room.child(aid ? "ai/"+qid+"/"+aid : "qi/"+qid).once("value"); return s.val() && s.val().d; }
   async becomeAdmin(code){ await this.db.ref("wcfAdmins/"+this.uid).set(code); }
   // 管理用の合言葉はFirebaseのルールで照合する（ページには手がかりを置かない）
@@ -264,10 +272,14 @@ class FireStore {
 class MockStore {
   async init(){ this.uid = ls.get("mockUid") || ("me-"+Math.random().toString(36).slice(2,8)); ls.set("mockUid", this.uid); }
   _load(){ try{ return JSON.parse(localStorage.getItem(LS+"mockData")) || {q:{},a:{}}; }catch(e){ return {q:{},a:{}}; } }
-  _save(d){ localStorage.setItem(LS+"mockData", JSON.stringify(d)); this.cb && this.cb(d.q, d.a); }
+  _save(d){ localStorage.setItem(LS+"mockData", JSON.stringify(d)); this.cb && this.cb(d.q, d.a, null, d.lk||{}); }
   async open(room){ return room === await roomOf("test"); }
-  subscribe(cb){ this.cb = cb; const d=this._load(); cb(d.q, d.a);
-    window.addEventListener("storage", e => { if (e.key===LS+"mockData"){ const d=this._load(); cb(d.q,d.a); } }); }
+  subscribe(cb){ this.cb = cb; const d=this._load(); cb(d.q, d.a, null, d.lk||{});
+    window.addEventListener("storage", e => { if (e.key===LS+"mockData"){ const d=this._load(); cb(d.q,d.a,null,d.lk||{}); } }); }
+  async like(qid,k,on){ const d=this._load(); const lk=(d.lk ||= {});
+    if (on){ if(!d.q[qid] || (k!=="q" && !d.a[qid]?.[k])) throw new Error("PERMISSION_DENIED"); ((lk[qid] ||= {})[k] ||= {})[this.uid]=true; }
+    else if (lk[qid]?.[k]) delete lk[qid][k][this.uid];
+    this._save(d); }
   _id(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
   // 写真は本文と別のキーに置く（本番の qi / ai と同じ分け方）
   _img(){ try{ return JSON.parse(localStorage.getItem(LS+"mockImg")) || {}; }catch(e){ return {}; } }
@@ -279,8 +291,8 @@ class MockStore {
   async photo(qid,aid){ const v=this._img()[aid ? "ai/"+qid+"/"+aid : "qi/"+qid]; return v && v.d; }
   _dropImg(pre){ const im=this._img(); for (const k of Object.keys(im)) if (k===pre || k.startsWith(pre+"/")) delete im[k]; this._setImg(im); }
   _canDel(owner){ return owner===this.uid || ls.get("mockAdmin")==="1"; }
-  async delQ(qid){ const d=this._load(); if(!this._canDel(d.q[qid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.q[qid]; delete d.a[qid]; this._dropImg("qi/"+qid); this._dropImg("ai/"+qid); this._save(d); }
-  async delA(qid,aid){ const d=this._load(); if(!this._canDel(d.a[qid]?.[aid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.a[qid][aid]; this._dropImg("ai/"+qid+"/"+aid); this._save(d); }
+  async delQ(qid){ const d=this._load(); if(!this._canDel(d.q[qid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.q[qid]; delete d.a[qid]; if (d.lk) delete d.lk[qid]; this._dropImg("qi/"+qid); this._dropImg("ai/"+qid); this._save(d); }
+  async delA(qid,aid){ const d=this._load(); if(!this._canDel(d.a[qid]?.[aid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.a[qid][aid]; if (d.lk?.[qid]) delete d.lk[qid][aid]; this._dropImg("ai/"+qid+"/"+aid); this._save(d); }
   async becomeAdmin(code){ if(code!=="admin") throw new Error("PERMISSION_DENIED"); ls.set("mockAdmin","1"); }
   async adminRoom(code){ if (code!=="admin") return null; ls.set("mockAdmin","1"); return roomOf("test"); }
   async dropAdmin(){ ls.del("mockAdmin"); }
@@ -289,7 +301,7 @@ class MockStore {
 // ---------- 画面 ----------
 const store = MOCK ? new MockStore() : new FireStore();
 let me = { name: "", admin: false };
-let data = { q:{}, a:{} };
+let data = { q:{}, a:{}, l:{} };
 
 function show(id){ for (const s of ["gate","main"]) $(s).classList.toggle("hidden", s!==id); }
 function setErr(id, msg){ $(id).textContent = msg || ""; }
@@ -322,12 +334,14 @@ function render(){
     return y.t - x.t;
   });
   if (!qs.length){ list.append(el("div",{class:"empty"},"まだ質問がありません。最初の一言をどうぞ。")); return; }
+  const kw = fold($("findInput").value).trim();
   for (const q of qs){
+    if (kw && ![q.x, q.n, ...q.ans.flatMap(([,a]) => [a.x, a.n])].some(s => fold(s).includes(kw))) continue;
     const wait = q.ans.length === 0;
     const card = el("article",{class:"q"},
       el("div",{class:"qtext"}, ...linkify(q.x)),
       q.p ? photoView("q/"+q.id, () => store.photo(q.id)) : null,
-      el("div",{class:"meta"}, q.n+" ・ "+ago(q.t), wait ? el("span",{class:"tag"},"回答まち") : null,
+      el("div",{class:"meta"}, q.n+" ・ "+ago(q.t), likeBtn(q.id, "q"), wait ? el("span",{class:"tag"},"回答まち") : null,
         (q.u===store.uid || me.admin) ? el("button",{class:"del", onclick:()=>delQ(q.id)},"消す") : null)
     );
     if (q.ans.length){
@@ -336,7 +350,7 @@ function render(){
         ul.append(el("li",{},
           el("div",{class:"atext"}, ...linkify(a.x)),
           a.p ? photoView("a/"+q.id+"/"+aid, () => store.photo(q.id, aid)) : null,
-          el("div",{class:"meta"}, a.n+" ・ "+ago(a.t),
+          el("div",{class:"meta"}, a.n+" ・ "+ago(a.t), likeBtn(q.id, aid),
             (a.u===store.uid || me.admin) ? el("button",{class:"del", onclick:()=>delA(q.id,aid)},"消す") : null)
         ));
       }
@@ -361,6 +375,17 @@ function render(){
   }
 }
 
+// いいね：「👍 3」。自分が押したものは色を変える。もう一度押すと取り消し
+function likeBtn(qid, k){
+  const who = (data.l[qid] && data.l[qid][k]) || {}, n = Object.keys(who).length, mine = !!who[store.uid];
+  return el("button",{type:"button", class:"like"+(mine?" on":""), "aria-pressed":String(mine), onclick: async () => {
+    try { await store.like(qid, k, !mine); } catch(e){ setErr("mainErr", friendly(e)); }
+  }}, "👍 "+n);
+}
+// 検索：大文字小文字・全角半角を区別しない（読み込み済みの分だけ。通信しない）
+const fold = s => (s||"").normalize("NFKC").toLowerCase();
+$("findInput").addEventListener("input", () => render());
+
 async function delQ(qid){
   if (!confirm("この質問を回答ごと消しますか？")) return;
   try { await store.delQ(qid); } catch(e){ setErr("mainErr", friendly(e)); }
@@ -374,9 +399,9 @@ async function enter(room){
   const ok = await store.open(room);
   if (!ok) return false;
   show("main"); renderMe();
-  store.subscribe((q,a,err) => {
+  store.subscribe((q,a,err,l) => {
     if (err){ setErr("mainErr","パスワードが変わったようです。右上の「退出」から入り直してください"); return; }
-    data = { q, a }; render();
+    data = { q, a, l: l||{} }; render();
   });
   setInterval(render, 60000); // 「◯分前」を更新
   return true;
