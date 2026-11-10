@@ -63,8 +63,6 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
 .like{background:none;color:var(--sub);border:1px solid var(--line);border-radius:999px;padding:0 8px;font-weight:400;font-size:12px}
 .like.on{color:#fff;background:var(--wine);border-color:var(--wine)}
 .find{position:relative;margin:0 0 12px}
-.find span{position:absolute;left:12px;top:50%;transform:translateY(-50%);pointer-events:none;font-size:14px}
-.find input{padding-left:36px}
 .admin{font-size:11px;color:#fff;background:var(--wine);border-radius:999px;padding:1px 6px;margin-left:4px}
 </style>
 </head>
@@ -95,14 +93,14 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
 
     <form class="ask" id="askForm">
       <div class="row">
-        <textarea id="askInput" rows="2" maxlength="140" placeholder="一言で質問（140字まで）"></textarea>
+        <textarea id="askInput" rows="2" maxlength="140" placeholder="一言で質問"></textarea>
         <button type="button" class="cam" id="askCam" aria-label="写真を付ける"></button>
         <button type="submit">聞く</button>
       </div>
       <div id="askPick"></div>
     </form>
     <div class="err" id="mainErr"></div>
-    <div class="find"><span aria-hidden="true">🔍</span><input id="findInput" type="text" enterkeyhint="search" placeholder="キーワードで探す" aria-label="キーワードで探す"></div>
+    <div class="find"><input id="findInput" type="text" enterkeyhint="search" placeholder="キーワードで探す" aria-label="キーワードで探す"></div>
 
     <div id="list"></div>
   </section>
