@@ -416,6 +416,7 @@ function postText(key, cls, x, qid, aid){
   return el("form",{class:"row edit", onsubmit: async ev => {
     ev.preventDefault();
     const nx = clean(inp.value, MAX_A); if (!nx) return;
+    if (nx === x){ delete editing[key]; render(); return; }   // 何も変えていなければ閉じるだけ（編集済みを付けない）
     inp.disabled = true;
     try { await store.edit(qid, aid, nx); delete editing[key]; setErr("mainErr"); render(); }
     catch(e){ setErr("mainErr", friendly(e)); inp.disabled = false; }
