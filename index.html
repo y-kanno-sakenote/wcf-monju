@@ -44,6 +44,7 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
 .tag{font-size:11px;color:var(--wait);border:1px solid var(--wait);border-radius:999px;padding:0 6px}
 .answers{margin:10px 0 0;padding:0;list-style:none}
 .answers li{background:var(--wine-soft);border-radius:10px;padding:8px 10px;margin-top:6px}
+.answers li.more{background:none;padding:0 2px}
 .atext{line-height:1.5;word-break:break-word}
 .qtext a,.atext a{color:var(--wine);word-break:break-all}
 .reply{margin-top:10px}
@@ -224,8 +225,16 @@ function pickView(key){
 }
 function renderAskPick(){ const b = $("askPick"); b.innerHTML = ""; const v = pickView("_ask"); if (v) b.append(v); }
 function photoView(key, load){
-  if (shownPhoto[key]) return el("img",{class:"photo", src:shownPhoto[key], alt:"添付の写真"});
-  const btn = el("button",{type:"button", class:"see", onclick: async () => {
+  if (shownPhoto[key]) return el("div",{},
+    el("img",{class:"photo", src:shownPhoto[key], alt:"添付の写真"}),
+    el("button",{type:"button", class:"see", onclick:ev=>{
+      // 閉じても読んでいた位置がずれないよう、「写真を見る」が押した所に来るように戻す
+      const before = ev.currentTarget.getBoundingClientRect().top;
+      delete shownPhoto[key]; render();
+      const b = [...$("list").querySelectorAll("button[data-photo]")].find(x => x.dataset.photo === key);
+      if (b) window.scrollBy(0, b.getBoundingClientRect().top - before);
+    }},"写真を閉じる"));
+  const btn = el("button",{type:"button", class:"see", "data-photo":key, onclick: async () => {
     btn.disabled = true;
     try { const d = await load(); if (!d) throw new Error("PERMISSION"); shownPhoto[key] = d; btn.replaceWith(photoView(key, load)); }
     catch(e){ btn.disabled = false; setErr("mainErr", "写真を読み込めませんでした"); }
@@ -370,7 +379,17 @@ function render(){
     );
     if (q.ans.length){
       const ul = el("ul",{class:"answers"});
-      for (const [aid,a] of q.ans){
+      // 回答が4件以上なら新しい2件だけ出す（検索で当たった回答・直している途中の回答が隠れるときは開いておく）
+      let shown = q.ans;
+      if (q.ans.length >= FOLD_AT && !opened[q.id]){
+        const hid = q.ans.slice(0, -FOLD_SHOW);
+        const must = hid.some(([aid,a]) => ("a/"+q.id+"/"+aid) in editing || (kw && (fold(a.x).includes(kw) || fold(a.n).includes(kw))));
+        if (!must){
+          shown = q.ans.slice(-FOLD_SHOW);
+          ul.append(el("li",{class:"more"}, el("button",{type:"button", class:"see", onclick:()=>{ opened[q.id] = true; render(); }},"前の回答 "+hid.length+"件を見る")));
+        }
+      }
+      for (const [aid,a] of shown){
         ul.append(el("li",{},
           postText("a/"+q.id+"/"+aid, "atext", a.x, q.id, aid),
           a.p ? photoView("a/"+q.id+"/"+aid, () => store.photo(q.id, aid)) : null,
@@ -404,6 +423,7 @@ function render(){
 
 // 直す：本人の投稿だけ。押すとその場で文章の入った欄と「保存」「やめる」を出す（キーは "q/質問id" か "a/質問id/回答id"）
 const editing = {};
+const FOLD_AT = 4, FOLD_SHOW = 2, opened = {};   // 回答の折りたたみ（開いた質問は開いたまま）
 function editBtn(key, post){
   if (post.u !== store.uid || key in editing) return null;
   return el("button",{class:"fix", onclick:()=>{ editing[key] = post.x; render();
