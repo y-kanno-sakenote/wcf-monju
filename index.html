@@ -53,6 +53,13 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
 .empty{color:var(--sub);text-align:center;padding:32px 0;font-size:14px}
 .leave{font-size:13px;flex:none}
 .rename{background:none;color:var(--ink);padding:4px 2px;font-weight:400;font-size:13px}
+.cam{background:transparent;color:var(--ink);border:1px solid var(--line);padding:11px 10px;font-weight:400}
+.reply .cam{padding:8px 9px}
+.pick{display:flex;align-items:center;gap:6px;margin-top:6px}
+.pick img{width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+.pick button{background:none;color:var(--sub);padding:4px 8px;font-weight:400}
+.photo{display:block;width:100%;border-radius:10px;margin-top:8px}
+.see{background:none;color:var(--wine);padding:4px 0 0;font-weight:400;font-size:13px}
 .admin{font-size:11px;color:#fff;background:var(--wine);border-radius:999px;padding:1px 6px;margin-left:4px}
 </style>
 </head>
@@ -84,8 +91,10 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
     <form class="ask" id="askForm">
       <div class="row">
         <textarea id="askInput" rows="2" maxlength="140" placeholder="一言で質問（140字まで）"></textarea>
+        <button type="button" class="cam" id="askCam" aria-label="写真を付ける">📷</button>
         <button type="submit">聞く</button>
       </div>
+      <div id="askPick"></div>
     </form>
     <div class="err" id="mainErr"></div>
 
@@ -155,6 +164,54 @@ function el(tag, attrs={}, ...kids){
 }
 function loadScript(src){ return new Promise((ok,ng)=>{ const s=document.createElement("script"); s.src=src; s.onload=ok; s.onerror=()=>ng(new Error("load "+src)); document.head.append(s); }); }
 
+// 写真：長い辺640pxの JPEG に描き直す（EXIF は消える）。base64 で約100KBを超えたら品質を下げ、それでも重ければ縮める
+const PHOTO_MAX = 100000;
+async function shrinkPhoto(file){
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok,ng) => { const i = new Image(); i.onload = () => ok(i); i.onerror = ng; i.src = url; });
+    let scale = Math.min(1, 640 / Math.max(img.naturalWidth, img.naturalHeight)), q = 0.7, d = "";
+    for (let k = 0; k < 20; k++){
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(img.naturalWidth*scale)); c.height = Math.max(1, Math.round(img.naturalHeight*scale));
+      const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0,0,c.width,c.height); g.drawImage(img, 0, 0, c.width, c.height);
+      d = c.toDataURL("image/jpeg", q);
+      if (d.length <= PHOTO_MAX) break;
+      if (q > 0.35) q -= 0.1; else scale *= 0.8;
+    }
+    if (!d.startsWith("data:image/jpeg;base64,")) throw new Error("jpeg");
+    return d;
+  } finally { URL.revokeObjectURL(url); }
+}
+// 📷で選んだ写真（送るまで覚えておく。キーは "_ask" か質問id）
+const picked = {};
+const shownPhoto = {};   // 「写真を見る」で読み込んだもの（描き直しで消えないように）
+function choosePhoto(key){
+  const f = el("input",{type:"file", accept:"image/*", class:"hidden"});
+  f.addEventListener("change", async () => {
+    const file = f.files && f.files[0]; f.remove(); if (!file) return;
+    try { picked[key] = await shrinkPhoto(file); setErr("mainErr"); }
+    catch(e){ setErr("mainErr","写真を読めませんでした"); }
+    key === "_ask" ? renderAskPick() : render();
+  });
+  document.body.append(f); f.click();
+}
+function pickView(key){
+  if (!picked[key]) return null;
+  return el("div",{class:"pick"}, el("img",{src:picked[key], alt:""}),
+    el("button",{type:"button", "aria-label":"写真を取り消す", onclick:()=>{ delete picked[key]; key==="_ask" ? renderAskPick() : render(); }},"×"));
+}
+function renderAskPick(){ const b = $("askPick"); b.innerHTML = ""; const v = pickView("_ask"); if (v) b.append(v); }
+function photoView(key, load){
+  if (shownPhoto[key]) return el("img",{class:"photo", src:shownPhoto[key], alt:"添付の写真"});
+  const btn = el("button",{type:"button", class:"see", onclick: async () => {
+    btn.disabled = true;
+    try { const d = await load(); if (!d) throw new Error("PERMISSION"); shownPhoto[key] = d; btn.replaceWith(photoView(key, load)); }
+    catch(e){ btn.disabled = false; setErr("mainErr", friendly(e)); }
+  }},"📷写真を見る");
+  return btn;
+}
+
 // ---------- 保存先（Firebase / 試し版） ----------
 class FireStore {
   async init(){
@@ -179,10 +236,20 @@ class FireStore {
     this.room.child("q").limitToLast(300).on("value", s => { q = s.val()||{}; fire(); }, err => cb(null,null,err));
     this.room.child("a").on("value", s => { a = s.val()||{}; fire(); }, err => cb(null,null,err));
   }
-  ask(n, x){ return this.room.child("q").push({ u:this.uid, n, x, t:firebase.database.ServerValue.TIMESTAMP }); }
-  answer(qid, n, x){ return this.room.child("a/"+qid).push({ u:this.uid, n, x, t:firebase.database.ServerValue.TIMESTAMP }); }
-  delQ(qid){ return this.room.update({ ["q/"+qid]:null, ["a/"+qid]:null }); }
-  delA(qid, aid){ return this.room.child("a/"+qid+"/"+aid).remove(); }
+  // 投稿と写真は多重パスの update でまとめて書く（写真の中身は qi / ai、本文には印 p だけ）
+  ask(n, x, photo){
+    const id = this.room.child("q").push().key, post = { u:this.uid, n, x, t:firebase.database.ServerValue.TIMESTAMP };
+    if (!photo) return this.room.child("q/"+id).set(post);
+    return this.room.update({ ["q/"+id]:{...post, p:true}, ["qi/"+id]:{ u:this.uid, d:photo } });
+  }
+  answer(qid, n, x, photo){
+    const id = this.room.child("a/"+qid).push().key, post = { u:this.uid, n, x, t:firebase.database.ServerValue.TIMESTAMP };
+    if (!photo) return this.room.child("a/"+qid+"/"+id).set(post);
+    return this.room.update({ ["a/"+qid+"/"+id]:{...post, p:true}, ["ai/"+qid+"/"+id]:{ u:this.uid, d:photo } });
+  }
+  delQ(qid){ return this.room.update({ ["q/"+qid]:null, ["a/"+qid]:null, ["qi/"+qid]:null, ["ai/"+qid]:null }); }
+  delA(qid, aid){ return this.room.update({ ["a/"+qid+"/"+aid]:null, ["ai/"+qid+"/"+aid]:null }); }
+  async photo(qid, aid){ const s = await this.room.child(aid ? "ai/"+qid+"/"+aid : "qi/"+qid).once("value"); return s.val() && s.val().d; }
   async becomeAdmin(code){ await this.db.ref("wcfAdmins/"+this.uid).set(code); }
   // 管理用の合言葉はFirebaseのルールで照合する（ページには手がかりを置かない）
   async adminRoom(code){
@@ -202,11 +269,18 @@ class MockStore {
   subscribe(cb){ this.cb = cb; const d=this._load(); cb(d.q, d.a);
     window.addEventListener("storage", e => { if (e.key===LS+"mockData"){ const d=this._load(); cb(d.q,d.a); } }); }
   _id(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
-  async ask(n,x){ const d=this._load(); d.q[this._id()]={u:this.uid,n,x,t:Date.now()}; this._save(d); }
-  async answer(qid,n,x){ const d=this._load(); if(!d.q[qid]) throw new Error("PERMISSION_DENIED"); (d.a[qid] ||= {})[this._id()]={u:this.uid,n,x,t:Date.now()}; this._save(d); }
+  // 写真は本文と別のキーに置く（本番の qi / ai と同じ分け方）
+  _img(){ try{ return JSON.parse(localStorage.getItem(LS+"mockImg")) || {}; }catch(e){ return {}; } }
+  _setImg(o){ localStorage.setItem(LS+"mockImg", JSON.stringify(o)); }
+  async ask(n,x,photo){ const d=this._load(), id=this._id(); d.q[id]={u:this.uid,n,x,t:Date.now()};
+    if (photo){ d.q[id].p=true; const im=this._img(); im["qi/"+id]={u:this.uid,d:photo}; this._setImg(im); } this._save(d); }
+  async answer(qid,n,x,photo){ const d=this._load(), id=this._id(); if(!d.q[qid]) throw new Error("PERMISSION_DENIED"); (d.a[qid] ||= {})[id]={u:this.uid,n,x,t:Date.now()};
+    if (photo){ d.a[qid][id].p=true; const im=this._img(); im["ai/"+qid+"/"+id]={u:this.uid,d:photo}; this._setImg(im); } this._save(d); }
+  async photo(qid,aid){ const v=this._img()[aid ? "ai/"+qid+"/"+aid : "qi/"+qid]; return v && v.d; }
+  _dropImg(pre){ const im=this._img(); for (const k of Object.keys(im)) if (k===pre || k.startsWith(pre+"/")) delete im[k]; this._setImg(im); }
   _canDel(owner){ return owner===this.uid || ls.get("mockAdmin")==="1"; }
-  async delQ(qid){ const d=this._load(); if(!this._canDel(d.q[qid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.q[qid]; delete d.a[qid]; this._save(d); }
-  async delA(qid,aid){ const d=this._load(); if(!this._canDel(d.a[qid]?.[aid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.a[qid][aid]; this._save(d); }
+  async delQ(qid){ const d=this._load(); if(!this._canDel(d.q[qid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.q[qid]; delete d.a[qid]; this._dropImg("qi/"+qid); this._dropImg("ai/"+qid); this._save(d); }
+  async delA(qid,aid){ const d=this._load(); if(!this._canDel(d.a[qid]?.[aid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.a[qid][aid]; this._dropImg("ai/"+qid+"/"+aid); this._save(d); }
   async becomeAdmin(code){ if(code!=="admin") throw new Error("PERMISSION_DENIED"); ls.set("mockAdmin","1"); }
   async adminRoom(code){ if (code!=="admin") return null; ls.set("mockAdmin","1"); return roomOf("test"); }
   async dropAdmin(){ ls.del("mockAdmin"); }
@@ -252,6 +326,7 @@ function render(){
     const wait = q.ans.length === 0;
     const card = el("article",{class:"q"},
       el("div",{class:"qtext"}, ...linkify(q.x)),
+      q.p ? photoView("q/"+q.id, () => store.photo(q.id)) : null,
       el("div",{class:"meta"}, q.n+" ・ "+ago(q.t), wait ? el("span",{class:"tag"},"回答まち") : null,
         (q.u===store.uid || me.admin) ? el("button",{class:"del", onclick:()=>delQ(q.id)},"消す") : null)
     );
@@ -260,6 +335,7 @@ function render(){
       for (const [aid,a] of q.ans){
         ul.append(el("li",{},
           el("div",{class:"atext"}, ...linkify(a.x)),
+          a.p ? photoView("a/"+q.id+"/"+aid, () => store.photo(q.id, aid)) : null,
           el("div",{class:"meta"}, a.n+" ・ "+ago(a.t),
             (a.u===store.uid || me.admin) ? el("button",{class:"del", onclick:()=>delA(q.id,aid)},"消す") : null)
         ));
@@ -272,11 +348,14 @@ function render(){
       ev.preventDefault();
       const x = clean(inp.value, MAX_A); if (!x) return;
       inp.disabled = true;
-      try { await store.answer(q.id, me.name, x); inp.value=""; setErr("mainErr"); }
+      try { await store.answer(q.id, me.name, x, picked[q.id]); inp.value=""; delete picked[q.id]; setErr("mainErr");
+        // 送信中に描き直されていたら、新しい回答欄にも下書きが写っているので空にする
+        list.querySelectorAll("textarea[data-q]").forEach(t => { if (t.dataset.q === q.id) t.value = ""; }); render(); }
       catch(e){ setErr("mainErr", friendly(e)); }
       inp.disabled = false;
-    }}, inp, el("button",{type:"submit"},"答える"));
+    }}, inp, el("button",{type:"button", class:"cam", "aria-label":"写真を付ける", onclick:()=>choosePhoto(q.id)},"📷"), el("button",{type:"submit"},"答える"));
     card.append(form);
+    const pv = pickView(q.id); if (pv) card.append(pv);
     list.append(card);
     if (focused === q.id) inp.focus();
   }
@@ -329,11 +408,12 @@ $("gateForm").addEventListener("submit", async ev => {
   $("gateBtn").disabled = false;
 });
 
+$("askCam").addEventListener("click", () => choosePhoto("_ask"));
 $("askForm").addEventListener("submit", async ev => {
   ev.preventDefault();
   const x = clean($("askInput").value, MAX_Q); if (!x) return;
   $("askInput").disabled = true;
-  try { await store.ask(me.name, x); $("askInput").value=""; setErr("mainErr"); }
+  try { await store.ask(me.name, x, picked._ask); $("askInput").value=""; delete picked._ask; renderAskPick(); setErr("mainErr"); }
   catch(e){ setErr("mainErr", friendly(e)); }
   $("askInput").disabled = false;
 });
