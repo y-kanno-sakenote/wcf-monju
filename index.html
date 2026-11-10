@@ -45,6 +45,7 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
 .answers{margin:10px 0 0;padding:0;list-style:none}
 .answers li{background:var(--wine-soft);border-radius:10px;padding:8px 10px;margin-top:6px}
 .atext{line-height:1.5;word-break:break-word}
+.qtext a,.atext a{color:var(--wine);word-break:break-all}
 .reply{margin-top:10px}
 .reply textarea{padding:9px 10px;font-size:16px}
 .reply button{padding:9px 12px}
@@ -128,6 +129,19 @@ function ago(t){
   if (s < 86400) return Math.floor(s/3600)+"時間前";
   if (s < 86400*30) return Math.floor(s/86400)+"日前";
   const d = new Date(t); return (d.getMonth()+1)+"/"+d.getDate();
+}
+// 本文中の http(s) のURLだけを、新しいタブで開くリンクにする（ほかは文字のまま）
+function linkify(text){
+  const out = [], re = /https?:\/\/[^\s<>"'「」（）()、。]+/g;
+  let last = 0, m;
+  while ((m = re.exec(text))){
+    let url = m[0].replace(/[.,!?！？]+$/, "");
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(el("a",{href:url, target:"_blank", rel:"noopener noreferrer nofollow"}, url));
+    last = m.index + url.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
 }
 function el(tag, attrs={}, ...kids){
   const e = document.createElement(tag);
@@ -237,7 +251,7 @@ function render(){
   for (const q of qs){
     const wait = q.ans.length === 0;
     const card = el("article",{class:"q"},
-      el("div",{class:"qtext"}, q.x),
+      el("div",{class:"qtext"}, ...linkify(q.x)),
       el("div",{class:"meta"}, q.n+" ・ "+ago(q.t), wait ? el("span",{class:"tag"},"回答まち") : null,
         (q.u===store.uid || me.admin) ? el("button",{class:"del", onclick:()=>delQ(q.id)},"消す") : null)
     );
@@ -245,7 +259,7 @@ function render(){
       const ul = el("ul",{class:"answers"});
       for (const [aid,a] of q.ans){
         ul.append(el("li",{},
-          el("div",{class:"atext"}, a.x),
+          el("div",{class:"atext"}, ...linkify(a.x)),
           el("div",{class:"meta"}, a.n+" ・ "+ago(a.t),
             (a.u===store.uid || me.admin) ? el("button",{class:"del", onclick:()=>delA(q.id,aid)},"消す") : null)
         ));
