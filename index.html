@@ -63,8 +63,8 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
     <h1>WCF ひとこと相談</h1>
     <p class="lead">会員だけの掲示板です。<br>一言で聞いて、一言で答えます。</p>
     <form id="gateForm">
-      <label for="pass">合言葉</label>
-      <input id="pass" type="password" autocomplete="off" required>
+      <label for="pass">パスワード</label>
+      <input id="pass" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required>
       <label for="name">ニックネーム（12字まで）</label>
       <input id="name" type="text" maxlength="12" required>
       <div style="margin-top:16px"><button type="submit" id="gateBtn">入る</button></div>
@@ -183,7 +183,7 @@ class FireStore {
   async dropAdmin(){ try{ await this.db.ref("wcfAdmins/"+this.uid).remove(); }catch(e){} }
 }
 
-// 試し版：この端末のブラウザだけに保存。合言葉は「test」、管理用は「admin」
+// 試し版：この端末のブラウザだけに保存。パスワードは「test」、管理用は「admin」
 class MockStore {
   async init(){ this.uid = ls.get("mockUid") || ("me-"+Math.random().toString(36).slice(2,8)); ls.set("mockUid", this.uid); }
   _load(){ try{ return JSON.parse(localStorage.getItem(LS+"mockData")) || {q:{},a:{}}; }catch(e){ return {q:{},a:{}}; } }
@@ -286,7 +286,7 @@ async function enter(room){
   if (!ok) return false;
   show("main"); renderMe();
   store.subscribe((q,a,err) => {
-    if (err){ setErr("mainErr","合言葉が変わったようです。メニューの「退出する」から入り直してください"); return; }
+    if (err){ setErr("mainErr","パスワードが変わったようです。メニューの「退出する」から入り直してください"); return; }
     data = { q, a }; render();
   });
   setInterval(render, 60000); // 「◯分前」を更新
@@ -307,12 +307,12 @@ $("gateForm").addEventListener("submit", async ev => {
       // 会員の合言葉で開かなければ、管理用の合言葉として試す
       const code = pass.normalize("NFKC").trim();
       const aroom = await store.adminRoom(code);
-      if (aroom === null){ setErr("gateErr","合言葉が違います"); }
-      else if (aroom === ""){ setErr("gateErr","先に会員の合言葉で一度入ってから、もう一度どうぞ"); }
+      if (aroom === null){ setErr("gateErr","パスワードが違います"); }
+      else if (aroom === ""){ setErr("gateErr","先に会員のパスワードで一度入ってから、もう一度どうぞ"); }
       else {
         me.admin = true;
         if (await enter(aroom)){ ls.set("room", aroom); ls.set("name", name); ls.set("admin","1"); }
-        else { me.admin = false; setErr("gateErr","合言葉が違います"); }
+        else { me.admin = false; setErr("gateErr","パスワードが違います"); }
       }
     }
   } catch(e){ setErr("gateErr", friendly(e)); }
