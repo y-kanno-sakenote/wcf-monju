@@ -53,13 +53,13 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
 .empty{color:var(--sub);text-align:center;padding:32px 0;font-size:14px}
 .leave{font-size:13px;flex:none}
 .rename{background:none;color:var(--ink);padding:4px 2px;font-weight:400;font-size:13px}
-.cam{background:transparent;color:var(--ink);border:1px solid var(--line);padding:11px 10px;font-weight:400}
-.reply .cam{padding:8px 9px}
+.cam{display:inline-flex;align-items:center;justify-content:center;flex:none;width:44px;height:44px;padding:0;background:var(--wine-soft);color:var(--wine);border:1px solid var(--line);font-weight:400}
+.ask .cam,.reply .cam{padding:0}
 .pick{display:flex;align-items:center;gap:6px;margin-top:6px}
 .pick img{width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
 .pick button{background:none;color:var(--sub);padding:4px 8px;font-weight:400}
 .photo{display:block;width:100%;border-radius:10px;margin-top:8px}
-.see{background:none;color:var(--wine);padding:4px 0 0;font-weight:400;font-size:13px}
+.see{display:inline-flex;align-items:center;gap:4px;background:none;color:var(--wine);padding:4px 0 0;font-weight:400;font-size:13px}
 .like{background:none;color:var(--sub);border:1px solid var(--line);border-radius:999px;padding:0 8px;font-weight:400;font-size:12px}
 .like.on{color:#fff;background:var(--wine);border-color:var(--wine)}
 .find{position:relative;margin:0 0 12px}
@@ -96,7 +96,7 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
     <form class="ask" id="askForm">
       <div class="row">
         <textarea id="askInput" rows="2" maxlength="140" placeholder="一言で質問（140字まで）"></textarea>
-        <button type="button" class="cam" id="askCam" aria-label="写真を付ける">📷</button>
+        <button type="button" class="cam" id="askCam" aria-label="写真を付ける"></button>
         <button type="submit">聞く</button>
       </div>
       <div id="askPick"></div>
@@ -168,6 +168,18 @@ function el(tag, attrs={}, ...kids){
   for (const c of kids) if (c != null) e.append(c);
   return e;
 }
+// 写真のマーク（線だけのカメラ）。色は親の文字色に従う
+const SVGNS = "http://www.w3.org/2000/svg";
+function camIcon(size){
+  const s = document.createElementNS(SVGNS, "svg");
+  for (const [k,v] of Object.entries({viewBox:"0 0 24 24", width:String(size), height:String(size), fill:"none", stroke:"currentColor", "stroke-width":"2", "stroke-linecap":"round", "stroke-linejoin":"round", "aria-hidden":"true", focusable:"false"})) s.setAttribute(k, v);
+  for (const [tag,a] of [["rect",{x:"3",y:"7",width:"18",height:"13",rx:"3"}], ["path",{d:"M8.5 7l1.5-2.5h4L15.5 7"}], ["circle",{cx:"12",cy:"13.5",r:"3.5"}]]){
+    const e = document.createElementNS(SVGNS, tag);
+    for (const [k,v] of Object.entries(a)) e.setAttribute(k, v);
+    s.append(e);
+  }
+  return s;
+}
 function loadScript(src){ return new Promise((ok,ng)=>{ const s=document.createElement("script"); s.src=src; s.onload=ok; s.onerror=()=>ng(new Error("load "+src)); document.head.append(s); }); }
 
 // 写真：長い辺640pxの JPEG に描き直す（EXIF は消える）。base64 で約100KBを超えたら品質を下げ、それでも重ければ縮める
@@ -214,7 +226,7 @@ function photoView(key, load){
     btn.disabled = true;
     try { const d = await load(); if (!d) throw new Error("PERMISSION"); shownPhoto[key] = d; btn.replaceWith(photoView(key, load)); }
     catch(e){ btn.disabled = false; setErr("mainErr", "写真を読み込めませんでした"); }
-  }},"📷写真を見る");
+  }}, camIcon(16), "写真を見る");
   return btn;
 }
 
@@ -367,7 +379,7 @@ function render(){
         list.querySelectorAll("textarea[data-q]").forEach(t => { if (t.dataset.q === q.id) t.value = ""; }); render(); }
       catch(e){ setErr("mainErr", friendly(e)); }
       inp.disabled = false;
-    }}, inp, el("button",{type:"button", class:"cam", "aria-label":"写真を付ける", onclick:()=>choosePhoto(q.id)},"📷"), el("button",{type:"submit"},"答える"));
+    }}, inp, el("button",{type:"button", class:"cam", "aria-label":"写真を付ける", onclick:()=>choosePhoto(q.id)}, camIcon(24)), el("button",{type:"submit"},"答える"));
     card.append(form);
     const pv = pickView(q.id); if (pv) card.append(pv);
     list.append(card);
@@ -433,6 +445,7 @@ $("gateForm").addEventListener("submit", async ev => {
   $("gateBtn").disabled = false;
 });
 
+$("askCam").append(camIcon(24));
 $("askCam").addEventListener("click", () => choosePhoto("_ask"));
 $("askForm").addEventListener("submit", async ev => {
   ev.preventDefault();
