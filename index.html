@@ -213,7 +213,7 @@ function photoView(key, load){
   const btn = el("button",{type:"button", class:"see", onclick: async () => {
     btn.disabled = true;
     try { const d = await load(); if (!d) throw new Error("PERMISSION"); shownPhoto[key] = d; btn.replaceWith(photoView(key, load)); }
-    catch(e){ btn.disabled = false; setErr("mainErr", friendly(e)); }
+    catch(e){ btn.disabled = false; setErr("mainErr", "写真を読み込めませんでした"); }
   }},"📷写真を見る");
   return btn;
 }
@@ -316,11 +316,11 @@ function renderMe(){
   $("meLine").append("あなた：", el("button",{class:"rename", onclick:rename}, me.name+" ✎"), me.admin ? el("span",{class:"admin"},"管理者") : "");
 }
 
+const drafts = {};
 function render(){
   const list = $("list");
-  // 入力途中の回答欄を残す
-  const drafts = {};
-  list.querySelectorAll("textarea[data-q]").forEach(i => { if (i.value) drafts[i.dataset.q] = i.value; });
+  // 入力途中の回答欄を残す（検索で隠れている質問の下書きも覚えたまま）
+  list.querySelectorAll("textarea[data-q]").forEach(i => { if (i.value) drafts[i.dataset.q] = i.value; else delete drafts[i.dataset.q]; });
   const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.q : null;
   list.innerHTML = "";
   const qs = Object.entries(data.q).map(([id,q]) => {
