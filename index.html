@@ -49,7 +49,12 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
 .reply{margin-top:10px}
 .reply textarea{padding:9px 10px;font-size:16px}
 .reply button{padding:9px 12px}
-.del{background:none;color:var(--sub);padding:0 4px;font-weight:400;font-size:12px;text-decoration:underline}
+.edit{margin-top:4px}
+.edit textarea{padding:9px 10px;font-size:16px}
+.edit button{padding:9px 12px}
+.edit button.ghost{padding:9px 6px}
+.edited{font-size:11px}
+.del,.fix{background:none;color:var(--sub);padding:0 4px;font-weight:400;font-size:12px;text-decoration:underline}
 .empty{color:var(--sub);text-align:center;padding:32px 0;font-size:14px}
 .leave{font-size:13px;flex:none}
 .rename{background:none;color:var(--ink);padding:4px 2px;font-weight:400;font-size:13px}
@@ -266,6 +271,9 @@ class FireStore {
   }
   delQ(qid){ return this.room.update({ ["q/"+qid]:null, ["a/"+qid]:null, ["qi/"+qid]:null, ["ai/"+qid]:null, ["lk/"+qid]:null }); }
   delA(qid, aid){ return this.room.update({ ["a/"+qid+"/"+aid]:null, ["ai/"+qid+"/"+aid]:null, ["lk/"+qid+"/"+aid]:null }); }
+  // 直す：文章(x)と直した時刻(e)だけを書く（u・n・t・p はルールで元のまま）
+  edit(qid, aid, x){ const path = aid ? "a/"+qid+"/"+aid : "q/"+qid;
+    return this.room.update({ [path+"/x"]:x, [path+"/e"]:firebase.database.ServerValue.TIMESTAMP }); }
   like(qid, k, on){ const r = this.room.child("lk/"+qid+"/"+k+"/"+this.uid); return on ? r.set(true) : r.remove(); }
   async photo(qid, aid){ const s = await this.room.child(aid ? "ai/"+qid+"/"+aid : "qi/"+qid).once("value"); return s.val() && s.val().d; }
   async becomeAdmin(code){ await this.db.ref("wcfAdmins/"+this.uid).set(code); }
@@ -303,6 +311,8 @@ class MockStore {
   _canDel(owner){ return owner===this.uid || ls.get("mockAdmin")==="1"; }
   async delQ(qid){ const d=this._load(); if(!this._canDel(d.q[qid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.q[qid]; delete d.a[qid]; if (d.lk) delete d.lk[qid]; this._dropImg("qi/"+qid); this._dropImg("ai/"+qid); this._save(d); }
   async delA(qid,aid){ const d=this._load(); if(!this._canDel(d.a[qid]?.[aid]?.u)) throw new Error("PERMISSION_DENIED"); delete d.a[qid][aid]; if (d.lk?.[qid]) delete d.lk[qid][aid]; this._dropImg("ai/"+qid+"/"+aid); this._save(d); }
+  async edit(qid,aid,x){ const d=this._load(), o = aid ? d.a[qid]?.[aid] : d.q[qid];
+    if (!o || o.u!==this.uid) throw new Error("PERMISSION_DENIED"); o.x=x; o.e=Date.now(); this._save(d); }
   async becomeAdmin(code){ if(code!=="admin") throw new Error("PERMISSION_DENIED"); ls.set("mockAdmin","1"); }
   async adminRoom(code){ if (code!=="admin") return null; ls.set("mockAdmin","1"); return roomOf("test"); }
   async dropAdmin(){ ls.del("mockAdmin"); }
@@ -332,6 +342,9 @@ function render(){
   // 入力途中の回答欄を残す（検索で隠れている質問の下書きも覚えたまま）
   list.querySelectorAll("textarea[data-q]").forEach(i => { if (i.value) drafts[i.dataset.q] = i.value; else delete drafts[i.dataset.q]; });
   const focused = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.q : null;
+  // 直している途中の文章と焦点も残す
+  list.querySelectorAll("textarea[data-edit]").forEach(i => { if (i.dataset.edit in editing) editing[i.dataset.edit] = i.value; });
+  const ae = document.activeElement, editFocus = ae && ae.dataset && ae.dataset.edit ? { key: ae.dataset.edit, s: ae.selectionStart, e: ae.selectionEnd } : null;
   list.innerHTML = "";
   const qs = Object.entries(data.q).map(([id,q]) => {
     const ans = Object.entries(data.a[id]||{}).sort((x,y)=>x[1].t-y[1].t);
@@ -349,18 +362,20 @@ function render(){
     if (kw && ![q.x, q.n, ...q.ans.flatMap(([,a]) => [a.x, a.n])].some(s => fold(s).includes(kw))) continue;
     const wait = q.ans.length === 0;
     const card = el("article",{class:"q"},
-      el("div",{class:"qtext"}, ...linkify(q.x)),
+      postText("q/"+q.id, "qtext", q.x, q.id, null),
       q.p ? photoView("q/"+q.id, () => store.photo(q.id)) : null,
-      el("div",{class:"meta"}, q.n+" ・ "+ago(q.t), likeBtn(q.id, "q"), wait ? el("span",{class:"tag"},"回答まち") : null,
+      el("div",{class:"meta"}, q.n+" ・ "+ago(q.t), q.e ? el("span",{class:"edited"},"（編集済み）") : null, likeBtn(q.id, "q"), wait ? el("span",{class:"tag"},"回答まち") : null,
+        editBtn("q/"+q.id, q),
         (q.u===store.uid || me.admin) ? el("button",{class:"del", onclick:()=>delQ(q.id)},"消す") : null)
     );
     if (q.ans.length){
       const ul = el("ul",{class:"answers"});
       for (const [aid,a] of q.ans){
         ul.append(el("li",{},
-          el("div",{class:"atext"}, ...linkify(a.x)),
+          postText("a/"+q.id+"/"+aid, "atext", a.x, q.id, aid),
           a.p ? photoView("a/"+q.id+"/"+aid, () => store.photo(q.id, aid)) : null,
-          el("div",{class:"meta"}, a.n+" ・ "+ago(a.t), likeBtn(q.id, aid),
+          el("div",{class:"meta"}, a.n+" ・ "+ago(a.t), a.e ? el("span",{class:"edited"},"（編集済み）") : null, likeBtn(q.id, aid),
+            editBtn("a/"+q.id+"/"+aid, a),
             (a.u===store.uid || me.admin) ? el("button",{class:"del", onclick:()=>delA(q.id,aid)},"消す") : null)
         ));
       }
@@ -383,6 +398,29 @@ function render(){
     list.append(card);
     if (focused === q.id) inp.focus();
   }
+  if (editFocus){ const t = list.querySelector('textarea[data-edit="'+editFocus.key+'"]');
+    if (t){ t.focus(); try { t.setSelectionRange(editFocus.s, editFocus.e); } catch(e){} } }
+}
+
+// 直す：本人の投稿だけ。押すとその場で文章の入った欄と「保存」「やめる」を出す（キーは "q/質問id" か "a/質問id/回答id"）
+const editing = {};
+function editBtn(key, post){
+  if (post.u !== store.uid || key in editing) return null;
+  return el("button",{class:"fix", onclick:()=>{ editing[key] = post.x; render();
+    const t = $("list").querySelector('textarea[data-edit="'+key+'"]'); if (t){ t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }},"直す");
+}
+function postText(key, cls, x, qid, aid){
+  if (!(key in editing)) return el("div",{class:cls}, ...linkify(x));
+  const inp = el("textarea",{rows:"2", maxlength:String(MAX_A), "aria-label":"直す文章", "data-edit":key});
+  inp.value = editing[key];
+  return el("form",{class:"row edit", onsubmit: async ev => {
+    ev.preventDefault();
+    const nx = clean(inp.value, MAX_A); if (!nx) return;
+    inp.disabled = true;
+    try { await store.edit(qid, aid, nx); delete editing[key]; setErr("mainErr"); render(); }
+    catch(e){ setErr("mainErr", friendly(e)); inp.disabled = false; }
+  }}, inp, el("button",{type:"submit"},"保存"),
+     el("button",{type:"button", class:"ghost", onclick:()=>{ delete editing[key]; render(); }},"やめる"));
 }
 
 // いいね：「👍 3」。自分が押したものは色を変える。もう一度押すと取り消し
