@@ -50,8 +50,8 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
 .reply button{padding:9px 12px}
 .del{background:none;color:var(--sub);padding:0 4px;font-weight:400;font-size:12px;text-decoration:underline}
 .empty{color:var(--sub);text-align:center;padding:32px 0;font-size:14px}
-.menu{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin:8px 0}
-.menu button{display:block;width:100%;text-align:left}
+.leave{font-size:13px;flex:none}
+.rename{background:none;color:var(--ink);padding:4px 2px;font-weight:400;font-size:13px}
 .admin{font-size:11px;color:#fff;background:var(--wine);border-radius:999px;padding:1px 6px;margin-left:4px}
 </style>
 </head>
@@ -76,13 +76,9 @@ textarea{resize:none;line-height:1.5;font-family:inherit}
   <section id="main" class="hidden">
     <div class="bar">
       <h1>WCF ひとこと相談</h1>
-      <button class="ghost" id="menuBtn" aria-label="メニュー">⋯</button>
+      <button class="ghost leave" id="leaveBtn">退出</button>
     </div>
     <div class="me" id="meLine"></div>
-    <div class="menu hidden" id="menu">
-      <button class="ghost" id="renameBtn">ニックネームを変える</button>
-      <button class="ghost" id="leaveBtn">退出する</button>
-    </div>
 
     <form class="ask" id="askForm">
       <div class="row">
@@ -217,7 +213,7 @@ function friendly(e){
 }
 function renderMe(){
   $("meLine").innerHTML = "";
-  $("meLine").append("あなた：" + me.name, me.admin ? el("span",{class:"admin"},"管理者") : "");
+  $("meLine").append("あなた：", el("button",{class:"rename", onclick:rename}, me.name+" ✎"), me.admin ? el("span",{class:"admin"},"管理者") : "");
 }
 
 function render(){
@@ -286,7 +282,7 @@ async function enter(room){
   if (!ok) return false;
   show("main"); renderMe();
   store.subscribe((q,a,err) => {
-    if (err){ setErr("mainErr","パスワードが変わったようです。メニューの「退出する」から入り直してください"); return; }
+    if (err){ setErr("mainErr","パスワードが変わったようです。右上の「退出」から入り直してください"); return; }
     data = { q, a }; render();
   });
   setInterval(render, 60000); // 「◯分前」を更新
@@ -328,12 +324,10 @@ $("askForm").addEventListener("submit", async ev => {
   $("askInput").disabled = false;
 });
 
-$("menuBtn").addEventListener("click", () => $("menu").classList.toggle("hidden"));
-$("renameBtn").addEventListener("click", () => {
+function rename(){
   const n = clean(prompt("新しいニックネーム（12字まで）", me.name), MAX_NAME);
   if (n){ me.name = n; ls.set("name", n); renderMe(); }
-  $("menu").classList.add("hidden");
-});
+}
 $("leaveBtn").addEventListener("click", async () => {
   if (!confirm("退出しますか？投稿は残ります")) return;
   if (me.admin) await store.dropAdmin();
